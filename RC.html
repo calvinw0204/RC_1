@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Train Fault Assistant</title>
+
+<style>
+body {
+  font-family: Arial;
+  background: #111;
+  color: #eee;
+  padding: 20px;
+  margin: 0;
+}
+
+.page { display: none; }
+.active { display: block; }
+
+button {
+  padding: 14px;
+  margin: 8px 0;
+  background: #222;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  white-space: pre-line;
+  font-size: 16px;
+}
+
+button:hover { background: #444; }
+
+.card {
+  background: #1c1c1c;
+  padding: 20px;
+  border-radius: 10px;
+  white-space: pre-line;
+}
+
+h1, h2 { text-align: center; }
+
+.correct { color: #4CAF50; font-weight: bold; }
+.wrong { color: #f44336; font-weight: bold; }
+
+.back-btn {
+  text-align: center;
+  margin-top: 20px;
+}
+</style>
+</head>
+<body>
+
+<!-- Step 1: Mode -->
+<div id="modePage" class="page active">
+  <h1>RC</h1>
+  <h2>選擇模式</h2>
+  <button onclick="selectMode('practice')">練習mode</button>
+  <button onclick="selectMode('quick')">快速提示模式</button>
+</div>
+
+<!-- Step 2: Train -->
+<div id="trainPage" class="page">
+  <h2>選擇車型</h2>
+  <button onclick="openTrain('SP1900')">SP1900</button>
+  <button onclick="openTrain('C-train')">C-train</button>
+  <div class="back-btn">
+    <button onclick="showMode()">⬅ 上一頁</button>
+  </div>
+</div>
+
+<!-- Quick Mode List -->
+<div id="listPage" class="page">
+  <h2 id="trainTitle"></h2>
+  <div id="faultButtons"></div>
+  <div class="back-btn">
+    <button onclick="showTrain()">⬅ 上一頁</button>
+  </div>
+</div>
+
+<!-- Detail Page -->
+<div id="detailPage" class="page">
+  <div class="card" id="detailContent"></div>
+  <div class="back-btn">
+    <button onclick="showList()">⬅ 上一頁</button>
+  </div>
+</div>
+
+<!-- Practice Page -->
+<div id="practicePage" class="page">
+  <div class="card" id="questionBox"></div>
+  <div id="answerButtons"></div>
+  <div id="practiceResult"></div>
+  <div class="back-btn">
+    <button onclick="showTrain()">⬅ 上一頁</button>
+  </div>
+</div>
+
+<script>
+
+const data = [
+
+{
+train:"SP1900",
+fault:"DLB",
+symptom:`出現10對車門出現EDCU fault，該卡車
+門不能關閉
+FSB applied
+**開門後跳，該車廂門不能關，人手關門。
+**關門後跳，該車廂門不能開，乘客可另一卡離開。`,
+solution:`MAKE PA清客，
+要求站員協助lock 10對車門。
+TIOS
+有客 PM mode 行 22kph，
+無客 PM mode 行 target speed。`
+},
+
+{
+train:"SP1900",
+fault:"頭卡跳 DCB",
+symptom:`車門自動關閉，
+有可能夾住乘客。
+FSB applied，
+沒有DCI`,
+solution:`用PA通知乘客勿靠近車門, 嘗試重置,
+得到TC授權，用「後備車門控制線路」BYPASS開車門，
+清客後用「後備車門控制線路」關車門及PLP關幕門。
+ATPS+TIOS+RM(FWD)回廠
+**用後備車門控制線路開車門會出現door open command fault，用後備車
+門控制線路關車門會出現door close command fault是正常，不用報TC。`
+},
+
+{
+train:"SP1900",
+fault:"尾卡跳 DCB",
+symptom:`車門自動關閉，有可能夾住乘客
+車門可以操作
+FSB applied，
+沒有DCI。`,
+solution:`重開車門，清客後。
+TIOS
+有客 PM mode 行 22kph，
+無客 PM mode 行 target speed`
+},
+
+{
+train:"SP1900",
+fault:"沒有DCI",
+symptom:`沒有DCI`,
+solution:`嘗試重置,
+MAKE PA清客，
+TIOS
+有客 PM mode 行 22kph，
+無客 PM mode 行 target speed。`
+},
+
+{
+train:"SP1900",
+fault:"D、M 或 C 卡跳 BCCB",
+symptom:`TMS 顯示parking brake not release bogie 1&2，
+Holding brake not release (Brake Page 1)
+Parking apply at defective car (Brake Page 2)`,
+solution:`D car嘗試重置
+MAKE PA清客
+PIBS
+PM mode 行30kph`
+},
+
+{
+train:"SP1900",
+fault:"P卡跳 BCCB",
+symptom:`TMS顯示parking brake not release bogie
+1&2，EB APPLIED
+PM car MRP activates (brake page2),
+TMS顯示Pxxx MRPR Low pressure`,
+solution:`MAKE PA清客
+ATPS＋EBBS＋PIBS＋RM(FWD)
+按TC指示回廠`
+},
+
+{
+train:"SP1900",
+fault:"MPB",
+symptom:`EB apply (brake page 1)
+沒有箭咀及PA掣冇功能，
+TMS熄滅(按一下重著)
+有DCI`,
+solution:`嘗試重置,
+用備用PA清客，
+車尾駕駛
+要求站員做handsignalman(記得還原備用PA掣才可以調頭)
+緊記和站員做Brake Test
+RM (REV)回廠`
+},
+
+{
+train:"SP1900",
+fault:"PBB",
+symptom:`停車後Holding brake apply (brake page 1)
+TMS沒有任何fault message
+按START 掣後 Cab display shows no motion
+行緊車不會落holding brake`,
+solution:`嘗試重置
+MAKE PA清客
+PIBS
+PM mode 行 30kph`
+},
+
+{
+train:"SP1900",
+fault:"PBB",
+symptom:`停車後Holding brake apply (brake page 1)
+TMS沒有任何fault message
+按START 掣後 Cab display shows no motion
+行緊車不會落holding brake`,
+solution:`嘗試重置
+MAKE PA清客
+PIBS
+PM mode 行 30kph`
+},
+
+{
+train:"SP1900",
+fault:"BKB1",
+symptom:`EB applied`,
+solution:`嘗試重置
+MAKE PA清客
+ATPS＋EBBS＋RM(FWD)`
+},
+
+{
+train:"SP1900",
+fault:"Brake Jam",
+symptom:`BJI不斷閃
+BJB不斷嚮
+TMS 顯示BECU fault message
+BECUmajor fault, BECU shut down, BECU
+transmission fault, Friction brake not release`,
+solution:`通知TC發生Brake hang on，及受影響位置(如有)，
+轉PM mode行低過22kph。
+Make適合PA通知乘客事故發生，
+問TC是否清客?
+清客後，要求站員打有關車卡BIC。
+Confirm後按TC指示`
+},
+
+{
+train:"SP1900",
+fault:"車尾 Rescue mode 被啟動",
+symptom:`EB applied，
+TMS沒有顯示RC cock operated`,
+solution:`MAKE PA清客
+ATPS＋EBBS＋RM(FWD)
+按TC指示回廠`
+},
+
+{
+train:"SP1900",
+fault:"Jammed 車尾車匙",
+symptom:`TMS主頁有occupy箭咀
+關門後沒有DCI燈
+關門後出現door close lost
+Off mode見到COI亮著`,
+solution:`MAKE PA清客
+TIOS
+PM mode 回廠
+***同樣情況頭卡JAM MCK, 可以轉頭打TIOS
+Driving from rear (REV)行車`
+},
+
+{
+train:"SP1900",
+fault:"車尾EBPB被啟動",
+symptom:`EB applied`,
+solution:`MAKE PA清客
+ATPS＋EBBS＋RM(FWD)
+按TC指示回廠`
+},
+
+{
+train:"SP1900",
+fault:"車尾Cab門彈開",
+symptom:`DCI燈熄滅
+TMS顯示車尾Cab門開`,
+solution:`Operate CDBS，Auto depart`
+},
+
+{
+train:"SP1900",
+fault:"VCB open",
+symptom:`VCB open超過60秒後，
+TMS出現Remote Power Supply，冷氣和
+光管的電由其他unit提供`,
+solution:`到站及開門後，按落弓掣2次(每次2秒)，按APRS
+掣2秒以上，按升弓掣2次(每次2秒 ，TMS會重
+置約45秒，成功後，需重新設定TMS的路線及隔
+離車門等等。`
+},
+
+{
+train:"SP1900",
+fault:"C.I. fault",
+symptom:`1.TMS顯示
+CI transmission fault
+CI failure
+CI Traction current overload
+Multiple CI failure
+CI ground fault
+2.有關動力卡出現紅色轆仔`,
+solution:`按落弓掣
+操作CIIS`
+},
+
+{
+train:"SP1900",
+fault:"Pantograph Auto Drop",
+symptom:`TMS顯示“Pantograph Auto Drop”
+所有集電弓降下`,
+solution:`留意架空電纜是否正常
+將有問題Pan之車卡用TMS隔離。`
+},
+
+{
+train:"SP1900",
+fault:"VCB open not ci",
+symptom:`VCB open超過60秒後，TMS出現Remote
+Power Supply，
+冷氣和光管的電由其他unit提供`,
+solution:`按落弓掣2次(每次2秒)，
+按APRS(TMS會重置約45秒)，
+按升弓掣2次(每次2秒 ，`
+},
+
+{
+train:"SP1900",
+fault:"Jammed 關門掣",
+symptom:`Cab display 顯示Door close command fault`,
+solution:`Make PA 延誤”車門稍遲打開”
+按前一站曾觸動關門掣。再開門
+Off mode Reset+MCK off。
+轉PM
+要求PLP 及Bypass 開車門/幕門。
+獲TC授權用後備車門控制線路。轉UOCS/DOCS至ON
+位置(UOCSI/DOCSI變紅閃)。先開幕門。按
+DEBS+DDOBB/DDOBB 開門。
+清客後。用UDCBB/DDCBB關門及PLP關幕門。`
+},
+
+{
+train:"SP1900",
+fault:"Jammed 開門掣",
+symptom:`Cab Display 顯示Door open command fault`,
+solution:`Make PA 延誤，
+等有沒有DOE，轉PM，
+先按月台方向及最後曾經觸動的[開門掣]兩次，
+要求Bypass 開車門。
+通知TC 會按關門掣再按開門掣，要求車站配合，
+獲TC授權用後備車門控制線路。轉UOCS/DOCS至ON
+位置(UOCSI/DOCSI變紅閃)。按DEBS+DDOBB/DDOBB
+開門。
+清客後。用UDCBB/DDCBB關門及PLP關幕門。`
+},
+
+{
+train:"SP1900",
+fault:"EB apply",
+symptom:`Unknown
+EB applied`,
+solution:`試Off mode reset→
+試PM→
+授權RM→ATPS→
+ATPS+EBBS→
+還原EBBS
+→Self Rescue (ATPS+RC)。`
+},
+
+{
+train:"SP1900",
+fault:"Trainline fault",
+symptom:``,
+solution:`Self Rescue (ATPS+RC)。`
+},
+
+{
+train:"C-train",
+fault:"BKB1",
+symptom:`EB applied(跟頭)
+TMS顯示”DSD Alarm Active”
+Back-wall跳BKB1`,
+solution:`嘗試重置
+ATPS+EBBS+RM(FWD)
+扭動DSD，EB才可以變回B100。`
+},
+
+{
+train:"C-train",
+fault:"PBB",
+symptom:`TMS顯示“Bogie 1& 2 Parking Brake not release”
+全車 Parking Brake上閘 (Brake page第2版)
+Holding brake apply (brake page 1)
+Back-wall跳PBB，沒有動力( Traction interlock)`,
+solution:`嘗試重置
+ATPS+ RC+PIBS+ RM(FWD)
+**自己做2菇1棍試Brake
+**如車尾 PBB 正常，視乎TC決定行車方向，可
+車尾用 PM 或RM(REV)行駛。不用打掣。`
+},
+
+{
+train:"C-train",
+fault:"BCCB(車頭)",
+symptom:`TMS顯示”MR Low Pressure”
+MRPR下降生效 (Bake page 第2版)
+EB applied
+back-wall跳BCCB
+主風壓正常或Compressor 未啟動 (假漏風)`,
+solution:`嘗試重置
+車尾駕駛，ATPS+ RC+RM(REV)
+要求站員做handsignalman及自己做2菇1棍，
+要站員在另一邊Cab做2菇。
+ Reverse行車不可打ATPS+EBBS，因為車頭EBPB冇反應。`
+},
+
+{
+train:"C-train",
+fault:"BCCB(車尾)",
+symptom:`TMS顯示MR Low Pressure
+MRPR下降生效 (Bake page 第2版)
+EB applied
+主風壓正常或Compressor 未啟動 (假漏風)`,
+solution:`ATPS+EBBS+RM(FWD)`
+},
+
+{
+train:"C-train",
+fault:"TDCCB(車頭)",
+symptom:`有DCI燈
+EB applied
+Back-wall跳TDCCB，車門不能操作
+AUTO/PM 立即施行FSB，
+RM保持駛行, 停車後EB。`,
+solution:`嘗試重置
+ATPS+RM(FWD)
+**因車門不能操作(開了車門)，關門用Internal Staff
+Close Key Switch /人手關門/Rear cab取控制關門
+**開門用EED/EAD/External Open/Close Key Switch`
+},
+
+{
+train:"C-train",
+fault:"TDCCB(車尾)",
+symptom:`無DCI燈，FSB applied
+車門可以操作`,
+solution:`TIOS
+載客限速22Km/h
+PM行車至下一站清客，清客後Line speed。`
+},
+
+{
+train:"C-train",
+fault:"TPB",
+symptom:`無DCI及COI燈 (跟頭)
+FSB applied
+不能操作車門開或關，
+不能操作電池開或關，
+不能操作集電弓升或降。`,
+solution:`嘗試重置
+ATPS+TIOS+RM(FWD)
+**不能操作APRS及CIIS
+**清客用EED/EAD/External Open/Close Key Switch開門
+**關門用Internal Staff Close Key Switch 。`
+},
+
+{
+train:"C-train",
+fault:"MPB",
+symptom:`TMS熄滅(按一下重著)
+ICP只有cab-to-cab可使用，
+司機主頁沒有箭咀
+EB applied
+TDI 轉紅色`,
+solution:`嘗試重置
+清客可先按PAD再按ICP或搵站員協助
+車尾駕駛
+RM(REV)
+要求站員做handsignalman及緊記做Brake Test`
+},
+
+{
+train:"C-train",
+fault:"DCCB",
+symptom:`TMS 顯示10對門有20句FAULT MESSAGES
+“DCU Transmission Fault D1-D5 & U1-U5”
+無DCI & FSB applied
+TMS顯示該卡所有車門轉為黑色
+不能控制該卡車門開關
+External Open/Close Key Switch 及 Internal Staff
+Close Key Switch 失效`,
+solution:`打 TIOS，載客限速=<22km/h
+PM行車至下一站清客
+要求站員鎖有關車廂之門
+清客後，繼續TIOS，Line speed行車
+**開門後跳，該車廂門不能關，人手關門。
+**關門後跳，該車廂門不能開，乘客另一卡離開。`
+},
+
+{
+train:"C-train",
+fault:"DSDCB",
+symptom:`EB applied
+TBC放在FSB位置或MSS在Auto模式，
+TMS顯示”DSD Alarm Active”`,
+solution:`嘗試Reset ，
+獲授權操作DSBS
+扭動DSD才可release EB
+要求安排站員在旁，需要時拍EB停車。`
+},
+
+{
+train:"C-train",
+fault:"TDCB(頭尾-兩Cab)",
+symptom:`TDI 無燈
+TMS顯示Train Divided Alarm及EB
+applied`,
+solution:`Confirm沒有斷卡
+嘗試重置頭CAB TDCB
+報TC ，ATPS+EBBS+RM( FWD) +＜15 km/h`
+},
+
+{
+train:"C-train",
+fault:"TDI 紅燈",
+symptom:`以下幾種情況下會發生TDI紅燈
+1. 四支針斷
+2. MPB跳
+3. 車頭EBBS板動
+4. Double Occupy
+5. 沒有推Mode`,
+solution:`依照各方面情況去處理
+**四支針斷：Confirm沒有斷卡，報TC
+ATPS+EBBS+RM( FWD) +＜15 km/h`
+},
+
+{
+train:"C-train",
+fault:"APS Ground fault detector(紅色)",
+symptom:`compressor 停止運作引至吾夠氣壓
+transformer 散熱導致VCB open
+charger 110v DC`,
+solution:`清客→off service ，跟指示行車。
+1個APS Ground fault可嘗TMS 復位
+3個APS Ground fault，如風壓低引至EB，試逐支弓去
+隔離，先隔離頭弓、Fault未消除就還原頭弓，再試隔
+離尾弓。。。。最後是K卡弓，如失敗安排救車。`
+},
+
+{
+train:"C-train",
+fault:"APC Fault",
+symptom:`VCB Open
+APC Fault`,
+solution:`先落弓掣，操作APRS，按升弓掣。
+如不成功，獲授權重置電池及到故障卡檢查APB, 如
+仍不成功, 要求安排救車。`
+},
+
+{
+train:"C-train",
+fault:"VCB Open",
+symptom:`VCB Open
+MTr oil flow stopped，
+Mtr over temperature etc。
+沒有CI fault及CI是綠色。`,
+solution:`報告TC
+先落弓掣，操作APRS，按升弓掣。
+**不成功，2個VCB Open考慮重置電池，或檢查VBB1/VBB2，若不
+成功，救車。`
+},
+
+{
+train:"C-train",
+fault:"VCB Open+CI Fault",
+symptom:`TMS顯示VCB Open
+**按升弓掣是埋VCB，CI是無法reset，
+CI是自我隔離。`,
+solution:`停定後，按升弓掣, 不成功的話，
+先落弓掣，再按升弓掣。
+**如CI+VCB open，VCB閉合後再open，再按升弓2次2秒 (最
+多嘗試兩次)`
+},
+
+{
+train:"C-train",
+fault:"VCB open + Ci IGBT",
+symptom:`VCB Open+
+CI Converter
+IGBT Self
+Protection`,
+solution:`報告TC，
+先落弓掣，獲授權使用CIIS
+按升弓掣
+**車長必須於TMS 故障信息”CI Bypass”確認旁通車卡是否正確`
+},
+
+{
+train:"C-train",
+fault:"Brake Jam",
+symptom:`可能出現停車點不準確
+行車不暢順
+車輪冒煙或有燒焦味
+TMS 顯示
+-EBCU Major fault
+-EBCU Transmission fault
+Bogie 1/2 Brake cannot release
+***BJI亮起及BJB響聲`,
+solution:`檢查Brake cylinder狀況
+通知TC發生Brake hang on，及受影響位置(如有)，
+關Damper，轉PM mode行低過22kph。
+Make適合PA通知乘客事故發生，
+問TC是否清客?
+清客後，
+要求站員打有關車卡BIC。
+Confirm後按TC指示
+PM跟Target Speed減20kph.( P，M，K及C car) ，
+D卡站員在BIC旁standby，防甩卡還原BIC，PM <22kph。
+** C-Train最多只容許打1個BIC，如需要打多於1個BIC，必
+須要求救車。`
+},
+
+{
+train:"C-train",
+fault:"Jammed 開門掣",
+symptom:`TMS顯示”Door open command fault”
+月台幕門開啓
+車門不能開啓
+沒有PSD Closed燈
+沒有APL/PLP綠燈`,
+solution:`Make PA，車門稍遲打開，
+等5秒後有沒有DOE，轉PM，
+先按月台方向及最後曾經觸動的[開門掣]兩次
+授權by-pass開車門
+通知TC會按關門掣再按開門掣，要求車站配合
+要求搵站長/double end車長係車尾，交control開門
+通知TC獲授權離開駕駛室清客，Make清客PA，用第
+三對車門[EED]清客 ，
+站員可以用External Staff Open/Close Key-Switch開多
+一對車門清客，清客完成後還原所有EED，
+Trip TDCCB中斷Door Open command對幕門影響，防
+止幕門自動彈開，用PLP/APL關幕門。
+要求ATPS+RM駛離月台，
+還原TDCCB，當位置重新入車`
+},
+{
+train:"C-train",
+fault:"Jammed 關門掣",
+symptom:`TMS顯示”Door open command fault”
+月台幕門開啓
+車門不能開啓
+沒有PSD Closed燈
+沒有APL/PLP綠燈`,
+solution:`Make PA，車門稍遲打開，
+等5秒後有沒有DOE，轉PM， APL/PLP開啟幕門，
+先按月台方向及最後曾經觸動的[關門掣]兩次，再按開
+門掣
+要求用PLP/APL開幕門及by-pass開車門，
+要求搵站長/double end車長係車尾，交control開門，
+扳下TDCCB以中斷Door Close command對幕門影響，
+再APL/PLP開啟幕門
+通知TC獲授權離開駕駛室清客，Make清客PA，用第
+三對車門[EED] 清客，
+站員可以用External Staff Open/Close Key-Switch開多
+一對車門清客，
+清客完成後還原所有EED，
+還原TDCCB，
+用APL/PLP關幕門，
+跟TC指示PM/Auto行車。`
+},
+{
+train:"C-train",
+fault:"Pantograph Auto Drop",
+symptom:`TMS顯示“Pantograph Auto Drop”
+所有集電弓降下
+故障集電弓車卡PAPB亮起
+1分鐘後進入 DC Saving Mode`,
+solution:`通知TC，將有問題Pan之車卡用TMS隔離。
+停定後，按升弓制，升回正常集電弓及留意VCB狀態。`
+},
+{
+train:"C-train",
+fault:"車尾Cab門彈開",
+symptom:`DCI燈熄滅
+TMS顯示車尾Cab門開
+TMS有Fault message
+FSB applied`,
+solution:`有沒有partition door alarm 嚮過
+從CCTV檢查車尾partition door status
+Report TC，Operate CDBS，Auto depart
+到站，站員關cab門，Normal CDBS，DCI是否著？
+如不成功，通知TC 叫站員用secondary cab door mechanical
+lock鎖尾CAB門。
+**未裝CDBS，Operate TIOS，PM<22km/h(有客)`
+},
+{
+train:"C-train",
+fault:"沒有DCI燈",
+symptom:`TMS顯示車門已經關閉 但沒有DCI燈`,
+solution:`打TIOS`
+},
+
+
+
+{
+train:"C-train",
+fault:"漏氣",
+symptom:`TMS顯示“MR Low Pressure”
+【MRP下降】顯示生效
+(風壓低於6 bar)
+EB applied`,
+solution:`關閉M/K卡或K/C卡其中一對MPIC
+關閉車頭及車尾2個BVIC(壞車)
+
+頭unit漏風漏
+往車尾駕駛室駕駛
+要求安排站員睇路
+緊記做紅喉試風之第3步。
+ATPS+RC+RM(REV)
+
+尾unit漏風漏
+車頭駕駛室駕駛
+自己做2菇1棍試Brake
+ATPS+ RC+RM(FWD)
+`
+},
+
+{
+train:"SP1900",
+fault:"漏風",
+symptom:`DT及PM-Car主風壓低於6.5 Bar
+TMS顯示“MR Low Pressure”
+【MRP下降】顯示生效
+EB applied`,
+solution:`關閉M/C卡或H/C卡其中一對MPIC
+關閉車頭及車尾2個BVIC(壞車)
+
+
+頭unit漏風漏
+往車尾駕駛室駕駛
+要求安排站員睇路
+緊記做紅喉試風之第3步。
+ATPS+ RC+RM(REV)
+
+尾unit漏風漏
+車頭駕駛室駕駛
+自己做2菇1棍試Brake
+ATPS+ RC+RM(FWD)
+`
+},
+
+
+];
+
+let currentMode = "";
+let currentTrain = "";
+let currentQuestion = null;
+
+function selectMode(mode){
+  currentMode = mode;
+  switchPage("trainPage");
+}
+
+function openTrain(train){
+  currentTrain = train;
+  if(currentMode === "quick"){
+    openQuickList();
+  } else {
+    startPractice();
+  }
+}
+
+function openQuickList(){
+  switchPage("listPage");
+  document.getElementById("trainTitle").innerText = currentTrain;
+  const container = document.getElementById("faultButtons");
+  container.innerHTML = "";
+
+  const filtered = data.filter(d => d.train === currentTrain);
+
+  filtered.forEach(item => {
+    const btn = document.createElement("button");
+    btn.innerText = item.fault + "\n\n" + item.symptom;
+    btn.onclick = () => openDetail(item);
+    container.appendChild(btn);
+  });
+}
+
+function openDetail(item){
+  switchPage("detailPage");
+  document.getElementById("detailContent").innerText =
+    item.train + " - " + item.fault +
+    "\n\n" +
+    item.symptom +
+    "\n\n處理方法：\n" +
+    item.solution;
+}
+
+function startPractice(){
+  switchPage("practicePage");
+
+  const filtered = data.filter(d => d.train === currentTrain);
+
+  // 隨機抽題
+  currentQuestion = filtered[Math.floor(Math.random()*filtered.length)];
+
+  document.getElementById("questionBox").innerText =
+    currentQuestion.fault + "\n\n" + currentQuestion.symptom;
+
+  // 取得同車型所有答案
+  let allSolutions = filtered.map(d => d.solution);
+
+  // 移除正確答案，避免重複
+  let wrongAnswers = allSolutions.filter(sol => sol !== currentQuestion.solution);
+
+  // 隨機抽3個錯誤答案
+  wrongAnswers.sort(() => Math.random()-0.5);
+  let selectedWrong = wrongAnswers.slice(0,3);
+
+  // 加入正確答案
+  let finalAnswers = [...selectedWrong, currentQuestion.solution];
+
+  // 再打亂
+  finalAnswers.sort(() => Math.random()-0.5);
+
+  const answerDiv = document.getElementById("answerButtons");
+  answerDiv.innerHTML = "";
+  document.getElementById("practiceResult").innerHTML = "";
+
+  finalAnswers.forEach(sol => {
+    const btn = document.createElement("button");
+    btn.innerText = sol;
+    btn.onclick = () => checkAnswer(sol);
+    answerDiv.appendChild(btn);
+  });
+}
+
+function checkAnswer(selected){
+  const result = document.getElementById("practiceResult");
+  const buttons = document.querySelectorAll("#answerButtons button");
+
+  // 禁止再按
+  buttons.forEach(b => b.disabled = true);
+
+  if(selected === currentQuestion.solution){
+    result.innerHTML = "<p class='correct'>✅ 正確</p>";
+  } else {
+    result.innerHTML = "<p class='wrong'>❌ 錯誤</p>";
+  }
+
+  // 1.5秒後自動下一題
+  setTimeout(() => {
+    startPractice();
+  }, 1500);
+}
+
+function showMode(){ switchPage("modePage"); }
+function showTrain(){ switchPage("trainPage"); }
+function showList(){ switchPage("listPage"); }
+
+function switchPage(id){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+</script>
+
+</body>
+</html>
